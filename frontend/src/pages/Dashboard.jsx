@@ -1,25 +1,50 @@
+import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 
+import apiFetch from "../services/api";
+
 function Dashboard() {
+  const [products, setProducts] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    const loadProducts = async () => {
+      try {
+        const data = await apiFetch("/api/products");
+        setProducts(data.products || []);
+      } catch (requestError) {
+        console.error(requestError);
+        setError(
+          requestError.message || "Failed to load dashboard data"
+        );
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    loadProducts();
+  }, []);
+
   const stats = [
     {
       title: "Total Products",
-      value: "0",
+      value: products.length,
       description: "All products in your store",
     },
     {
       title: "Active",
-      value: "0",
+      value: products.filter((product) => product.status === "ACTIVE").length,
       description: "Currently active products",
     },
     {
       title: "Draft",
-      value: "0",
+      value: products.filter((product) => product.status === "DRAFT").length,
       description: "Products in draft status",
     },
     {
       title: "Archived",
-      value: "0",
+      value: products.filter((product) => product.status === "ARCHIVED").length,
       description: "Archived products",
     },
   ];
@@ -46,6 +71,12 @@ function Dashboard() {
         </Link>
       </div>
 
+      {error && (
+        <div className="mt-6 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+          {error}
+        </div>
+      )}
+
       {/* Stats */}
       <div className="mt-8 grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-4">
         {stats.map((stat) => (
@@ -58,7 +89,7 @@ function Dashboard() {
             </p>
 
             <p className="mt-3 text-3xl font-bold text-gray-900">
-              {stat.value}
+              {loading ? "..." : stat.value}
             </p>
 
             <p className="mt-2 text-sm text-gray-500">

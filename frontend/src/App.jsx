@@ -31,8 +31,8 @@ function App() {
           />
 
           <Route path="/activity" element={<Activity />} />
+          <Route path="/products/new" element={<CreateProduct />} />
         </Route>
-        <Route path="/products/new" element={<CreateProduct />} />
       </Routes>
     </BrowserRouter>
   );
