@@ -5,7 +5,8 @@ const {
     createProduct,
     getProductById,
     updateProduct,
-    getProductActivities
+    getProductActivities,
+    addProductImage,
 } = require("../controllers/productController");
 const { requireShopifyAuth } = require("../middleware/shopifyAuth");
 
@@ -16,6 +17,7 @@ router.use(requireShopifyAuth);
 router.get("/", getProducts)
 router.post("/", createProduct)
 router.get("/:id/activities", getProductActivities);
+router.post("/:id/images", addProductImage);
 router.get("/:id", getProductById)
 router.patch("/:id", updateProduct)
 

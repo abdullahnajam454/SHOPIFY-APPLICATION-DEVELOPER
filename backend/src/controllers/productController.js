@@ -60,6 +60,11 @@ const getProducts = async (req, res) => {
                         createdAt
                         updatedAt
 
+                        featuredImage {
+                            url
+                            altText
+                        }
+
                         variants(first: 10) {
                             nodes {
                                 id
@@ -354,9 +359,11 @@ const createProduct = async (req, res) => {
             variants: [
                 {
                     id: variant.id,
+
                     price: numericPrice.toFixed(2),
-                    sku: sku || null,
+
                     inventoryItem: {
+                        sku: sku || null,
                         tracked: true,
                     },
                 },
@@ -443,99 +450,6 @@ const createProduct = async (req, res) => {
         console.log(
             JSON.stringify(activeLocation, null, 2)
         );
-
-        // ------------------------------------------
-        // 5. INVENTORY ACTIVATE
-        // ------------------------------------------
-        const inventoryActivateMutation = `
-            mutation InventoryActivate(
-                $inventoryItemId: ID!
-                $locationId: ID!
-                $available: Int
-                $onHand: Int
-                $idempotencyKey: String!
-            ) {
-                inventoryActivate(
-                    inventoryItemId: $inventoryItemId
-                    locationId: $locationId
-                    available: $available
-                    onHand: $onHand
-                ) @idempotent(key: $idempotencyKey) {
-
-                    inventoryLevel {
-                        id
-
-                        location {
-                            id
-                            name
-                        }
-
-                        quantities(
-                            names: ["available", "on_hand"]
-                        ) {
-                            name
-                            quantity
-                        }
-                    }
-
-                    userErrors {
-                        field
-                        message
-                    }
-                }
-            }
-        `;
-
-        const activateVariables = {
-            inventoryItemId,
-            locationId: activeLocation.id,
-            available: numericInventory,
-            onHand: numericInventory,
-            idempotencyKey: crypto.randomUUID(),
-        };
-
-        console.log("\n========== INVENTORY ACTIVATE VARIABLES ==========");
-        console.log(
-            JSON.stringify(
-                activateVariables,
-                null,
-                2
-            )
-        );
-
-        const activateResponse =
-            await shopifyGraphQL(
-                inventoryActivateMutation,
-                activateVariables
-            );
-
-        // IMPORTANT LOG
-        console.log(
-            "\n========== INVENTORY ACTIVATE RESPONSE =========="
-        );
-        console.log(
-            JSON.stringify(
-                activateResponse,
-                null,
-                2
-            )
-        );
-
-        const activatePayload =
-            activateResponse.data.inventoryActivate;
-
-        if (activatePayload.userErrors?.length) {
-            console.error(
-                "Inventory activate userErrors:",
-                activatePayload.userErrors
-            );
-
-            throw new Error(
-                activatePayload.userErrors
-                    .map((error) => error.message)
-                    .join(", ")
-            );
-        }
 
         // ------------------------------------------
         // 6. INVENTORY SET QUANTITIES
@@ -849,6 +763,11 @@ const getProductById = async (req, res) => {
                     createdAt
                     updatedAt
 
+                    featuredImage {
+                        url
+                        altText
+                    }
+
                     variants(first: 50) {
                         nodes {
                             id
@@ -989,7 +908,7 @@ const updateProduct = async (req, res) => {
                 product(id: $id) {
                     id
                     title
-                    description
+                    descriptionHtml
                     status
                     productType
                     vendor
@@ -1038,7 +957,7 @@ const updateProduct = async (req, res) => {
                     product {
                         id
                         title
-                        description
+                        descriptionHtml
                         status
                         productType
                         vendor
@@ -1056,7 +975,7 @@ const updateProduct = async (req, res) => {
             input: {
                 id: productId,
                 title: title?.trim(),
-                description,
+                descriptionHtml: description,
                 status,
                 productType,
                 vendor,
@@ -1174,10 +1093,378 @@ const getProductActivities = async (
     }
 };
 
+// --------------------------------------------------
+// ADD PRODUCT IMAGE
+// --------------------------------------------------
+const addProductImage = async (req, res) => {
+    try {
+        const { shop, accessToken } = req.shopify;
+
+        const productId =
+            toProductGid(req.params.id);
+
+        const {
+            imageUrl,
+            imageData,
+            filename = "product-image.jpg",
+            alt = "Product image",
+        } = req.body;
+
+        if (imageData) {
+            const match = imageData.match(
+                /^data:(image\/(?:jpeg|png|webp|gif));base64,(.+)$/
+            );
+
+            if (!match) {
+                return res.status(400).json({
+                    success: false,
+                    message:
+                        "Image must be a JPEG, PNG, WebP, or GIF file",
+                });
+            }
+
+            const mimeType = match[1];
+            const fileBuffer = Buffer.from(match[2], "base64");
+
+            if (fileBuffer.length > 10 * 1024 * 1024) {
+                return res.status(400).json({
+                    success: false,
+                    message: "Image must be smaller than 10 MB",
+                });
+            }
+
+            const stagedResponse = await fetch(
+                `https://${shop}/admin/api/2026-07/graphql.json`,
+                {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json",
+                        "X-Shopify-Access-Token": accessToken,
+                    },
+                    body: JSON.stringify({
+                        query: `
+                            mutation StagedUpload(
+                                $input: [StagedUploadInput!]!
+                            ) {
+                                stagedUploadsCreate(input: $input) {
+                                    stagedTargets {
+                                        url
+                                        resourceUrl
+                                        parameters {
+                                            name
+                                            value
+                                        }
+                                    }
+                                    userErrors {
+                                        field
+                                        message
+                                    }
+                                }
+                            }
+                        `,
+                        variables: {
+                            input: [
+                                {
+                                    filename,
+                                    mimeType,
+                                    httpMethod: "POST",
+                                    resource: "PRODUCT_IMAGE",
+                                },
+                            ],
+                        },
+                    }),
+                }
+            );
+
+            const stagedResult = await stagedResponse.json();
+            const stagedPayload =
+                stagedResult.data?.stagedUploadsCreate;
+
+            if (
+                !stagedResponse.ok ||
+                stagedResult.errors?.length ||
+                stagedPayload?.userErrors?.length ||
+                !stagedPayload?.stagedTargets?.[0]
+            ) {
+                throw new Error(
+                    stagedPayload?.userErrors?.map(
+                        (error) => error.message
+                    ).join(", ") ||
+                    "Shopify could not prepare the image upload"
+                );
+            }
+
+            const stagedTarget =
+                stagedPayload.stagedTargets[0];
+            const uploadForm = new FormData();
+
+            stagedTarget.parameters.forEach((parameter) => {
+                uploadForm.append(
+                    parameter.name,
+                    parameter.value
+                );
+            });
+
+            uploadForm.append(
+                "file",
+                new Blob([fileBuffer], { type: mimeType }),
+                filename
+            );
+
+            const uploadResponse = await fetch(
+                stagedTarget.url,
+                {
+                    method: "POST",
+                    body: uploadForm,
+                }
+            );
+
+            if (!uploadResponse.ok) {
+                throw new Error(
+                    `Shopify image upload failed (${uploadResponse.status})`
+                );
+            }
+
+            const mediaResponse = await fetch(
+                `https://${shop}/admin/api/2026-07/graphql.json`,
+                {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json",
+                        "X-Shopify-Access-Token": accessToken,
+                    },
+                    body: JSON.stringify({
+                        query: `
+                            mutation ProductCreateMedia(
+                                $media: [CreateMediaInput!]!
+                                $productId: ID!
+                            ) {
+                                productCreateMedia(
+                                    media: $media
+                                    productId: $productId
+                                ) {
+                                    media {
+                                        id
+                                        alt
+                                        mediaContentType
+                                        status
+                                    }
+                                    mediaUserErrors {
+                                        field
+                                        message
+                                    }
+                                }
+                            }
+                        `,
+                        variables: {
+                            productId,
+                            media: [
+                                {
+                                    originalSource:
+                                        stagedTarget.resourceUrl,
+                                    mediaContentType: "IMAGE",
+                                    alt,
+                                },
+                            ],
+                        },
+                    }),
+                }
+            );
+
+            const mediaResult = await mediaResponse.json();
+            const mediaPayload =
+                mediaResult.data?.productCreateMedia;
+
+            if (
+                !mediaResponse.ok ||
+                mediaResult.errors?.length ||
+                mediaPayload?.mediaUserErrors?.length
+            ) {
+                throw new Error(
+                    mediaPayload?.mediaUserErrors?.map(
+                        (error) => error.message
+                    ).join(", ") ||
+                    "Shopify could not attach the image"
+                );
+            }
+
+            await ProductActivity.create({
+                shop,
+                productId,
+                action: "UPDATE",
+                oldValue: null,
+                newValue: {
+                    filename,
+                    action: "IMAGE_ADDED",
+                },
+            });
+
+            return res.status(201).json({
+                success: true,
+                message: "Product image added successfully",
+                media: mediaPayload.media,
+            });
+        }
+
+        // ------------------------------------------
+        // Validate image URL
+        // ------------------------------------------
+        if (!imageUrl || typeof imageUrl !== "string") {
+            return res.status(400).json({
+                success: false,
+                message: "Image URL is required",
+            });
+        }
+
+        try {
+            new URL(imageUrl);
+        } catch {
+            return res.status(400).json({
+                success: false,
+                message: "Invalid image URL",
+            });
+        }
+
+        // ------------------------------------------
+        // Shopify GraphQL mutation
+        // ------------------------------------------
+        const mutation = `
+            mutation ProductCreateMedia(
+                $media: [CreateMediaInput!]!
+                $productId: ID!
+            ) {
+                productCreateMedia(
+                    media: $media
+                    productId: $productId
+                ) {
+                    media {
+                        alt
+                        mediaContentType
+                        status
+                    }
+
+                    mediaUserErrors {
+                        field
+                        message
+                    }
+                }
+            }
+        `;
+
+        const variables = {
+            productId,
+
+            media: [
+                {
+                    originalSource: imageUrl,
+                    mediaContentType: "IMAGE",
+                    alt: "Product image",
+                },
+            ],
+        };
+
+        console.log(
+            "\n========== ADD PRODUCT IMAGE =========="
+        );
+
+        console.log(
+            JSON.stringify(
+                variables,
+                null,
+                2
+            )
+        );
+
+        const response = await fetch(
+            `https://${shop}/admin/api/2026-07/graphql.json`,
+            {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    "X-Shopify-Access-Token": accessToken,
+                },
+                body: JSON.stringify({
+                    query: mutation,
+                    variables,
+                }),
+            }
+        );
+
+        const result = await response.json();
+
+        console.log(
+            "\n========== ADD IMAGE RESPONSE =========="
+        );
+
+        console.log(
+            JSON.stringify(
+                result,
+                null,
+                2
+            )
+        );
+
+        if (result.errors) {
+            return res.status(400).json({
+                success: false,
+                message: "Shopify image creation failed",
+                errors: result.errors,
+            });
+        }
+
+        const payload =
+            result.data.productCreateMedia;
+
+        if (payload.mediaUserErrors?.length) {
+            return res.status(400).json({
+                success: false,
+                message: "Failed to add product image",
+                errors: payload.mediaUserErrors,
+            });
+        }
+
+        // ------------------------------------------
+        // Activity
+        // ------------------------------------------
+        await ProductActivity.create({
+            shop,
+            productId,
+
+            action: "UPDATE",
+
+            oldValue: null,
+
+            newValue: {
+                imageUrl,
+                action: "IMAGE_ADDED",
+            },
+        });
+
+        return res.status(201).json({
+            success: true,
+            message: "Product image added successfully",
+            media: payload.media,
+        });
+    } catch (error) {
+        console.error(
+            "Add product image error:",
+            error
+        );
+
+        return res.status(500).json({
+            success: false,
+            message:
+                error.message ||
+                "Failed to add product image",
+        });
+    }
+};
+
 module.exports = {
     getProducts,
     createProduct,
     getProductById,
     updateProduct,
     getProductActivities,
+    addProductImage,
 };

@@ -19,6 +19,29 @@ function CreateProduct() {
 
     const [saving, setSaving] = useState(false);
     const [error, setError] = useState("");
+    const [image, setImage] = useState(null);
+
+    const handleImageChange = (event) => {
+        const file = event.target.files?.[0];
+
+        if (!file) {
+            setImage(null);
+            return;
+        }
+
+        if (!file.type.startsWith("image/")) {
+            setError("Please select an image file");
+            return;
+        }
+
+        if (file.size > 10 * 1024 * 1024) {
+            setError("Image must be smaller than 10 MB");
+            return;
+        }
+
+        setError("");
+        setImage(file);
+    };
 
     const handleChange = (event) => {
         const { name, value } = event.target;
@@ -51,6 +74,31 @@ function CreateProduct() {
             });
 
             console.log("Created product:", data);
+
+            if (image && data.product?.id) {
+                const imageData = await new Promise((resolve, reject) => {
+                    const reader = new FileReader();
+
+                    reader.onload = () => resolve(reader.result);
+                    reader.onerror = () => reject(
+                        new Error("Could not read the product image")
+                    );
+
+                    reader.readAsDataURL(image);
+                });
+
+                await apiFetch(
+                    `/api/products/${encodeURIComponent(data.product.id)}/images`,
+                    {
+                        method: "POST",
+                        body: JSON.stringify({
+                            imageData,
+                            filename: image.name,
+                            alt: form.title,
+                        }),
+                    }
+                );
+            }
 
             navigate("/products");
         } catch (error) {
@@ -137,6 +185,31 @@ function CreateProduct() {
                         rows="6"
                         className="w-full rounded-lg border px-4 py-3 text-sm outline-none focus:border-black"
                     />
+                </div>
+
+                {/* Product Image */}
+                <div>
+                    <label
+                        htmlFor="image"
+                        className="mb-2 block text-sm font-medium text-gray-700"
+                    >
+                        Product Image
+                    </label>
+
+                    <input
+                        id="image"
+                        name="image"
+                        type="file"
+                        accept="image/jpeg,image/png,image/webp,image/gif"
+                        onChange={handleImageChange}
+                        className="w-full rounded-lg border px-4 py-3 text-sm"
+                    />
+
+                    {image && (
+                        <p className="mt-2 text-sm text-gray-500">
+                            {image.name}
+                        </p>
+                    )}
                 </div>
 
                 {/* Status */}

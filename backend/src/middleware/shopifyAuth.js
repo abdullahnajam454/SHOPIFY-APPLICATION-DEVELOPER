@@ -92,6 +92,10 @@ const requireShopifyAuth = async (req, res, next) => {
         // 5. Store Shopify authentication
         // ------------------------------------------
         req.shopDomain = shopDomain;
+        req.shopify = {
+            shop: shopDomain,
+            accessToken,
+        };
         req.shopifyUserId = payload.sub;
 
         // IMPORTANT:
